@@ -421,17 +421,46 @@ SpriteMorph.prototype.initBlocks = function () {
             category: 'sound',
             spec: 'stop all sounds'
         },
+        doPlayDrum: {
+            type: 'command',
+            category: 'sound',
+            spec: 'play drum %drum for %n beats',
+            defaults: [1, 0.25]
+        },
         doRest: {
             type: 'command',
             category: 'sound',
             spec: 'rest for %n beats',
-            defaults: [0.2]
+            defaults: [0.25]
         },
         doPlayNote: {
             type: 'command',
             category: 'sound',
             spec: 'play note %n for %n beats',
             defaults: [60, 0.5]
+        },
+        doSetInstrument: {
+            type: 'command',
+            category: 'sound',
+            spec: 'set instrument to %instr',
+            defaults: [1]
+        },
+        changeVolume: {
+            type: 'command',
+            category: 'sound',
+            spec: 'change volume by %n',
+            defaults: [-10]
+        },
+        setVolume: {
+            type: 'command',
+            category: 'sound',
+            spec: 'set volume to %n %',
+            defaults: [100]
+        },
+        getVolume: {
+            type: 'reporter',
+            category: 'sound',
+            spec: 'volume'
         },
         doChangeTempo: {
             type: 'command',
@@ -819,6 +848,11 @@ SpriteMorph.prototype.initBlocks = function () {
             type: 'predicate',
             category: 'sensing',
             spec: 'key %key pressed?'
+        },
+        reportLoudness: {
+            type: 'reporter',
+            category: 'sensing',
+            spec: 'loudness'
         },
         reportDistanceTo: {
             type: 'reporter',
@@ -1255,6 +1289,8 @@ SpriteMorph.prototype.blockAlternatives = {
     // sound:
     playSound: ['doPlaySoundUntilDone'],
     doPlaySoundUntilDone: ['playSound'],
+    changeVolume: ['setVolume'],
+    setVolume: ['changeVolume'],
     doChangeTempo: ['doSetTempo'],
     doSetTempo: ['doChangeTempo'],
 
@@ -1317,6 +1353,8 @@ SpriteMorph.prototype.init = function (globals) {
     this.costumes = new List();
     this.costume = null;
     this.sounds = new List();
+    this.volume = 100;
+    this.instrument = 0;
     this.normalExtent = new Point(60, 60); // only for costume-less situation
     this.scale = 1;
     this.rotationStyle = 1; // 1 = full, 2 = left/right, 0 = off
@@ -1337,6 +1375,8 @@ SpriteMorph.prototype.init = function (globals) {
     this.rotationOffset = new Point(); // not to be serialized (!)
     this.idx = 0; // not to be serialized (!) - used for de-serialization
     this.wasWarped = false; // not to be serialized, used for fast-tracking
+    this.volumeNode = SnapAudioContext.createGain(); // not to be serialized
+    this.volumeNode.connect(SnapAudioContext.destination);
 
     this.graphicsValues = { 'negative': 0,
                             'fisheye': 0,
@@ -1412,6 +1452,9 @@ SpriteMorph.prototype.fullCopy = function (forClone) {
         dp.rotatesWithAnchor = part.rotatesWithAnchor;
         c.attachPart(dp);
     });
+    c.volumeNode = SnapAudioContext.createGain();
+    c.volumeNode.connect(SnapAudioContext.destination);
+    c.setVolume(this.volume);
     return c;
 };
 
@@ -1812,9 +1855,16 @@ SpriteMorph.prototype.blockTemplates = function (category) {
         blocks.push(block('doPlaySoundUntilDone'));
         blocks.push(block('doStopAllSounds'));
         blocks.push('-');
+        blocks.push(block('doPlayDrum'));
         blocks.push(block('doRest'));
         blocks.push('-');
         blocks.push(block('doPlayNote'));
+        blocks.push(block('doSetInstrument'));
+        blocks.push('-');
+        blocks.push(block('changeVolume'));
+        blocks.push(block('setVolume'));
+        blocks.push(watcherToggle('getVolume'));
+        blocks.push(block('getVolume'));
         blocks.push('-');
         blocks.push(block('doChangeTempo'));
         blocks.push(block('doSetTempo'));
@@ -1928,6 +1978,9 @@ SpriteMorph.prototype.blockTemplates = function (category) {
         blocks.push(block('reportMouseDown'));
         blocks.push('-');
         blocks.push(block('reportKeyPressed'));
+        blocks.push('-');
+        blocks.push(watcherToggle('reportLoudness'));
+        blocks.push(block('reportLoudness'));
         blocks.push('-');
         blocks.push(block('reportDistanceTo'));
         blocks.push('-');
@@ -2749,12 +2802,10 @@ SpriteMorph.prototype.playSound = function (name) {
         ),
         active;
     if (sound) {
-        active = sound.play();
+        active = sound.play(this.volumeNode);
         if (stage) {
             stage.activeSounds.push(active);
-            stage.activeSounds = stage.activeSounds.filter(function (aud) {
-                return !aud.ended && !aud.terminated;
-            });
+            stage.cleanUpEndedSounds();
         }
         return active;
     }
@@ -2762,6 +2813,23 @@ SpriteMorph.prototype.playSound = function (name) {
 
 SpriteMorph.prototype.reportSounds = function () {
     return this.sounds;
+};
+
+// SpriteMorph volume
+
+SpriteMorph.prototype.setVolume = function (volume) {
+    if (!isNaN(volume)) {
+        this.volume = Math.max(0, Math.min(+volume, 100));
+        this.volumeNode.gain.value = this.volume / 100;
+    }
+};
+
+SpriteMorph.prototype.changeVolume = function (delta) {
+    this.setVolume(this.volume + delta);
+};
+
+SpriteMorph.prototype.getVolume = function (volume) {
+    return this.volume;
 };
 
 // SpriteMorph user menu
@@ -3930,6 +3998,16 @@ SpriteMorph.prototype.reportMouseY = function () {
     return 0;
 };
 
+// SpriteMorph microphone loudness
+
+SpriteMorph.prototype.reportLoudness = function () {
+    var stage = this.parentThatIsA(StageMorph);
+    if (stage) {
+        return stage.reportLoudness();
+    }
+    return 0;
+};
+
 // SpriteMorph thread count (for debugging)
 
 SpriteMorph.prototype.reportThreadCount = function () {
@@ -4864,6 +4942,8 @@ StageMorph.prototype.init = function (globals) {
     this.costumes = new List();
     this.costume = null;
     this.sounds = new List();
+    this.volume = 100;
+    this.instrument = 0;
     this.version = Date.now(); // for observers
     this.isFastTracked = false;
     this.enableCustomHatBlocks = true;
@@ -4886,6 +4966,9 @@ StageMorph.prototype.init = function (globals) {
 
     this.trailsCanvas = null;
     this.isThreadSafe = false;
+
+    this.volumeNode = SnapAudioContext.createGain(); // not to be serialized
+    this.volumeNode.connect(SnapAudioContext.destination);
 
     this.graphicsValues = { 'negative': 0,
                             'fisheye': 0,
@@ -5174,6 +5257,20 @@ StageMorph.prototype.reportMouseY = function () {
         return (this.center().y - world.hand.position().y) / this.scale;
     }
     return 0;
+};
+
+// SpriteMorph microphone loudness
+
+StageMorph.prototype.microphone = null;
+
+StageMorph.prototype.reportLoudness = function () {
+    if (!this.microphone) {
+        StageMorph.prototype.microphone = new Microphone();
+    }
+    if (this.microphone.error) {
+        throw this.microphone.error;
+    }
+    return this.microphone.getLoudness();
 };
 
 // StageMorph drag & drop
@@ -5598,9 +5695,16 @@ StageMorph.prototype.blockTemplates = function (category) {
         blocks.push(block('doPlaySoundUntilDone'));
         blocks.push(block('doStopAllSounds'));
         blocks.push('-');
+        blocks.push(block('doPlayDrum'));
         blocks.push(block('doRest'));
         blocks.push('-');
         blocks.push(block('doPlayNote'));
+        blocks.push(block('doSetInstrument'));
+        blocks.push('-');
+        blocks.push(block('changeVolume'));
+        blocks.push(block('setVolume'));
+        blocks.push(watcherToggle('getVolume'));
+        blocks.push(block('getVolume'));
         blocks.push('-');
         blocks.push(block('doChangeTempo'));
         blocks.push(block('doSetTempo'));
@@ -5691,7 +5795,10 @@ StageMorph.prototype.blockTemplates = function (category) {
         blocks.push(block('reportMouseY'));
         blocks.push(block('reportMouseDown'));
         blocks.push('-');
+        blocks.push(watcherToggle('reportLoudness'));
         blocks.push(block('reportKeyPressed'));
+        blocks.push('-');
+        blocks.push(block('reportLoudness'));
         blocks.push('-');
         blocks.push(block('doResetTimer'));
         blocks.push(watcherToggle('getTimer'));
@@ -6168,6 +6275,23 @@ StageMorph.prototype.resumeAllActiveSounds = function () {
 
 StageMorph.prototype.reportSounds
     = SpriteMorph.prototype.reportSounds;
+
+StageMorph.prototype.cleanUpEndedSounds = function () {
+    this.activeSounds = this.activeSounds.filter(function (aud) {
+        return !aud.ended && !aud.terminated;
+    });
+};
+
+// StageMorph volume
+
+StageMorph.prototype.setVolume
+    = SpriteMorph.prototype.setVolume;
+
+StageMorph.prototype.changeVolume
+    = SpriteMorph.prototype.changeVolume;
+
+StageMorph.prototype.getVolume
+    = SpriteMorph.prototype.getVolume;
 
 // StageMorph non-variable watchers
 
@@ -6987,103 +7111,6 @@ CostumeEditorMorph.prototype.mouseDownLeft = function (pos) {
 CostumeEditorMorph.prototype.mouseMove
     = CostumeEditorMorph.prototype.mouseDownLeft;
 
-// Sound /////////////////////////////////////////////////////////////
-
-// Sound instance creation
-
-function Sound(audio, name) {
-    this.audio = audio; // mandatory
-    this.name = name || "Sound";
-}
-
-Sound.prototype.play = function () {
-    // return an instance of an audio element which can be terminated
-    // externally (i.e. by the stage)
-    var aud = document.createElement('audio');
-    aud.src = this.audio.src;
-    aud.play();
-    return aud;
-};
-
-Sound.prototype.copy = function () {
-    var snd = document.createElement('audio'),
-        cpy;
-
-    snd.src = this.audio.src;
-    cpy = new Sound(snd, this.name ? copy(this.name) : null);
-    return cpy;
-};
-
-Sound.prototype.toDataURL = function () {
-    return this.audio.src;
-};
-
-// Note /////////////////////////////////////////////////////////
-
-// I am a single musical note
-
-// Note instance creation
-
-function Note(pitch) {
-    this.pitch = pitch === 0 ? 0 : pitch || 69;
-    this.setupContext();
-    this.oscillator = null;
-}
-
-// Note shared properties
-
-Note.prototype.audioContext = null;
-Note.prototype.gainNode = null;
-
-// Note audio context
-
-Note.prototype.setupContext = function () {
-    if (this.audioContext) { return; }
-    var AudioContext = (function () {
-        // cross browser some day?
-        var ctx = window.AudioContext ||
-            window.mozAudioContext ||
-            window.msAudioContext ||
-            window.oAudioContext ||
-            window.webkitAudioContext;
-        if (!ctx.prototype.hasOwnProperty('createGain')) {
-            ctx.prototype.createGain = ctx.prototype.createGainNode;
-        }
-        return ctx;
-    }());
-    if (!AudioContext) {
-        throw new Error('Web Audio API is not supported\nin this browser');
-    }
-    Note.prototype.audioContext = new AudioContext();
-    Note.prototype.gainNode = Note.prototype.audioContext.createGain();
-    Note.prototype.gainNode.gain.value = 0.25; // reduce volume by 1/4
-};
-
-// Note playing
-
-Note.prototype.play = function () {
-    this.oscillator = this.audioContext.createOscillator();
-    if (!this.oscillator.start) {
-        this.oscillator.start = this.oscillator.noteOn;
-    }
-    if (!this.oscillator.stop) {
-        this.oscillator.stop = this.oscillator.noteOff;
-    }
-    this.oscillator.type = 'sine';
-    this.oscillator.frequency.value =
-        Math.pow(2, (this.pitch - 69) / 12) * 440;
-    this.oscillator.connect(this.gainNode);
-    this.gainNode.connect(this.audioContext.destination);
-    this.oscillator.start(0);
-};
-
-Note.prototype.stop = function () {
-    if (this.oscillator) {
-        this.oscillator.stop(0);
-        this.oscillator = null;
-    }
-};
-
 // CellMorph //////////////////////////////////////////////////////////
 
 /*
@@ -7546,7 +7573,8 @@ WatcherMorph.prototype.object = function () {
 WatcherMorph.prototype.isGlobal = function (selector) {
     return contains(
         ['getLastAnswer', 'getLastMessage', 'getTempo', 'getTimer',
-             'reportMouseX', 'reportMouseY', 'reportThreadCount'],
+             'reportMouseX', 'reportMouseY', 'reportThreadCount',
+             'reportLoudness'],
         selector
     );
 };

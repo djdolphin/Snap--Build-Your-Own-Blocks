@@ -299,21 +299,6 @@ IDE_Morph.prototype.openIn = function (world) {
 
     this.reactToWorldResize(world.bounds);
 
-    function getURL(url) {
-        try {
-            var request = new XMLHttpRequest();
-            request.open('GET', url, false);
-            request.send();
-            if (request.status === 200) {
-                return request.responseText;
-            }
-            throw new Error('unable to retrieve ' + url);
-        } catch (err) {
-            myself.showMessage('unable to retrieve project');
-            return '';
-        }
-    }
-
     // dynamic notifications from non-source text files
     // has some issues, commented out for now
     /*
@@ -341,7 +326,12 @@ IDE_Morph.prototype.openIn = function (world) {
                 )) {
                 this.droppedText(hash);
             } else {
-                this.droppedText(getURL(hash));
+                this.getURL(
+                    hash,
+                    function (data) {
+                        myself.droppedText(data);
+                    }
+                );
             }
         } else if (location.hash.substr(0, 5) === '#run:') {
             hash = location.hash.substr(5);
@@ -351,11 +341,21 @@ IDE_Morph.prototype.openIn = function (world) {
             }
             if (hash.substr(0, 8) === '<project>') {
                 this.rawOpenProjectString(hash);
+                this.toggleAppMode(true);
+                this.runScripts();
             } else {
-                this.rawOpenProjectString(getURL(hash));
+                this.getURL(
+                    hash,
+                    function (data) {
+                        myself.rawOpenProjectString(data);
+                        myself.toggleAppMode(true);
+                        myself.runScripts();
+                    },
+                    function () {
+                        this.showMessage('unable to retrieve project');
+                    }
+                );
             }
-            this.toggleAppMode(true);
-            this.runScripts();
         } else if (location.hash.substr(0, 9) === '#present:') {
             this.shield = new Morph();
             this.shield.color = this.color;
@@ -2606,20 +2606,24 @@ IDE_Morph.prototype.projectMenu = function () {
     // loadFunction takes in two parameters: a file URL, and a canonical name
     function createMediaMenu(mediaType, loadFunction) {
         return function () {
-            var names = this.getMediaList(mediaType),
-                mediaMenu = new MenuMorph(
-                    myself,
-                    localize('Import') + ' ' + localize(mediaType)
-                );
+            this.getMediaList(
+                mediaType,
+                function (names) {
+                    var mediaMenu = new MenuMorph(
+                            myself,
+                            localize('Import') + ' ' + localize(mediaType)
+                        );
 
-            names.forEach(function (item) {
-                mediaMenu.addItem(
-                    item.name,
-                    function () {loadFunction(item.file, item.name); },
-                    item.help
-                );
-            });
-            mediaMenu.popup(world, pos);
+                    names.forEach(function (item) {
+                        mediaMenu.addItem(
+                            item.name,
+                            function () {loadFunction(item.file, item.name); },
+                            item.help
+                        );
+                    });
+                    mediaMenu.popup(world, pos);
+                }
+            );
         };
     }
 
@@ -2744,9 +2748,11 @@ IDE_Morph.prototype.projectMenu = function () {
     menu.addItem(
         'Import tools',
         function () {
-            myself.droppedText(
-                myself.getURL(myself.resourceURL('tools.xml')),
-                'tools'
+            myself.getURL(
+                myself.resourceURL('tools.xml'),
+                function (data) {
+                    myself.droppedText(data, 'tools');
+                }
             );
         },
         'load the official library of\npowerful blocks'
@@ -2756,8 +2762,12 @@ IDE_Morph.prototype.projectMenu = function () {
         createMediaMenu(
             'libraries',
             function loadLib(file, name) {
-                var url = myself.resourceURL('libraries', file);
-                myself.droppedText(myself.getURL(url), name);
+                myself.getURL(
+                    myself.resourceURL('libraries', file),
+                    function (data) {
+                        myself.droppedText(data, name);
+                    }
+                );
             }
         ),
         'Select categories of additional blocks to add to this project.'
@@ -2775,11 +2785,8 @@ IDE_Morph.prototype.projectMenu = function () {
         createMediaMenu(
             'Sounds',
             function loadSound(file, name) {
-                var url = myself.resourceURL('Sounds', file),
-                    audio = new Audio();
-                audio.src = url;
-                audio.load();
-                myself.droppedAudio(audio, name);
+                var url = myself.resourceURL('Sounds', file);
+                myself.droppedAudio(url, name);
             }
         ),
         'Select a sound from the media library'
@@ -2796,18 +2803,20 @@ IDE_Morph.prototype.resourceURL = function () {
     return args.join('/');
 };
 
-IDE_Morph.prototype.getMediaList = function (dirname) {
+IDE_Morph.prototype.getMediaList = function (dirname, callback) {
     // Return a list of files in a directory based on the contents file
-    var url, data;
+    var myself = this;
 
-    url = this.resourceURL(dirname, dirname.toUpperCase());
-    data = this.parseResourceFile(this.getURL(url));
-
-    data.sort(function (x, y) {
-        return x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1;
-    });
-
-    return data;
+    this.getURL(
+        this.resourceURL(dirname, dirname.toUpperCase()),
+        function (data) {
+            data = myself.parseResourceFile(data);
+            data.sort(function (x, y) {
+                return x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1;
+            });
+            callback(data);
+        }
+    );
 };
 
 IDE_Morph.prototype.parseResourceFile = function (text) {
@@ -2850,103 +2859,108 @@ IDE_Morph.prototype.importMedia = function (mediaType) {
     // open a dialog box letting the user browse available "built-in"
     // costumes or backgrounds
 
-    var dialog = new DialogBoxMorph().withKey('import' + mediaType),
-        frame = new ScrollFrameMorph(),
-        selectedIcon = null,
-        turtle = new SymbolMorph('turtle', 60),
-        items = this.getMediaList(mediaType),
-        myself = this,
-        world = this.world(),
-        handle;
+    var myself = this;
 
-    frame.acceptsDrops = false;
-    frame.contents.acceptsDrops = false;
-    frame.color = myself.groupColor;
-    frame.fixLayout = nop;
-    dialog.labelString = mediaType;
-    dialog.createLabel();
-    dialog.addBody(frame);
-    dialog.addButton('ok', 'Import');
-    dialog.addButton('cancel', 'Cancel');
+    this.getMediaList(
+        mediaType,
+        function (items) {
+            var dialog = new DialogBoxMorph().withKey('import' + mediaType),
+                frame = new ScrollFrameMorph(),
+                selectedIcon = null,
+                turtle = new SymbolMorph('turtle', 60),
+                world = myself.world(),
+                handle;
 
-    dialog.ok = function () {
-        if (selectedIcon) {
-            myself.droppedImage(
-                selectedIcon.object.contents,
-                selectedIcon.labelString
+            frame.acceptsDrops = false;
+            frame.contents.acceptsDrops = false;
+            frame.color = myself.groupColor;
+            frame.fixLayout = nop;
+            dialog.labelString = mediaType;
+            dialog.createLabel();
+            dialog.addBody(frame);
+            dialog.addButton('ok', 'Import');
+            dialog.addButton('cancel', 'Cancel');
+
+            dialog.ok = function () {
+                if (selectedIcon) {
+                    myself.droppedImage(
+                        selectedIcon.object.contents,
+                        selectedIcon.labelString
+                    );
+                }
+            };
+
+            dialog.fixLayout = function () {
+                var th = fontHeight(this.titleFontSize) + this.titlePadding * 2,
+                    x = 0,
+                    y = 0,
+                    fp, fw;
+                this.buttons.fixLayout();
+                this.body.setPosition(this.position().add(new Point(
+                    this.padding,
+                    th + this.padding
+                )));
+                this.body.setExtent(new Point(
+                    this.width() - this.padding * 2,
+                    this.height() - this.padding * 3 - th - this.buttons.height()
+                ));
+                fp = this.body.position();
+                fw = this.body.width();
+                frame.contents.children.forEach(function (icon) {
+                      icon.setPosition(fp.add(new Point(x, y)));
+                    x += icon.width();
+                    if (x + icon.width() > fw) {
+                        x = 0;
+                        y += icon.height();
+                    }
+                });
+                frame.contents.adjustBounds();
+                this.label.setCenter(this.center());
+                this.label.setTop(this.top() + (th - this.label.height()) / 2);
+                this.buttons.setCenter(this.center());
+                this.buttons.setBottom(this.bottom() - this.padding);
+            };
+
+            items.forEach(function (item) {
+                var url = myself.resourceURL(mediaType, item.file),
+                    img = new Image(),
+                    icon = new CostumeIconMorph(
+                        new Costume(turtle.image, item.name)
+                    );
+                icon.isDraggable = false;
+                icon.userMenu = nop;
+                icon.action = function () {
+                    if (selectedIcon === icon) return;
+                    var prevSelected = selectedIcon;
+                    selectedIcon = icon;
+                    if (prevSelected) prevSelected.refresh();
+                };
+                icon.doubleClickAction = dialog.ok;
+                icon.query = function () {
+                    return icon === selectedIcon;
+                };
+                frame.addContents(icon);
+                img.onload = function () {
+                    var canvas = newCanvas(new Point(img.width, img.height), true);
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                    icon.object = new Costume(canvas, item.name);
+                    icon.refresh();
+                };
+                img.src = url;
+            });
+            dialog.popUp(world);
+            dialog.setExtent(new Point(400, 300));
+            dialog.setCenter(world.center());
+            dialog.drawNew();
+
+            handle = new HandleMorph(
+                dialog,
+                300,
+                280,
+                dialog.corner,
+                dialog.corner
             );
         }
-    };
-
-    dialog.fixLayout = function () {
-        var th = fontHeight(this.titleFontSize) + this.titlePadding * 2,
-            x = 0,
-            y = 0,
-            fp, fw;
-        this.buttons.fixLayout();
-        this.body.setPosition(this.position().add(new Point(
-            this.padding,
-            th + this.padding
-        )));
-        this.body.setExtent(new Point(
-            this.width() - this.padding * 2,
-            this.height() - this.padding * 3 - th - this.buttons.height()
-        ));
-        fp = this.body.position();
-        fw = this.body.width();
-        frame.contents.children.forEach(function (icon) {
-              icon.setPosition(fp.add(new Point(x, y)));
-            x += icon.width();
-            if (x + icon.width() > fw) {
-                x = 0;
-                y += icon.height();
-            }
-        });
-        frame.contents.adjustBounds();
-        this.label.setCenter(this.center());
-        this.label.setTop(this.top() + (th - this.label.height()) / 2);
-        this.buttons.setCenter(this.center());
-        this.buttons.setBottom(this.bottom() - this.padding);
-    };
-
-    items.forEach(function (item) {
-        var url = myself.resourceURL(mediaType, item.file),
-            img = new Image(),
-            icon = new CostumeIconMorph(
-                new Costume(turtle.image, item.name)
-            );
-        icon.isDraggable = false;
-        icon.userMenu = nop;
-        icon.action = function () {
-            if (selectedIcon === icon) return;
-            var prevSelected = selectedIcon;
-            selectedIcon = icon;
-            if (prevSelected) prevSelected.refresh();
-        };
-        icon.doubleClickAction = dialog.ok;
-        icon.query = function () {
-            return icon === selectedIcon;
-        };
-        frame.addContents(icon);
-        img.onload = function () {
-            var canvas = newCanvas(new Point(img.width, img.height), true);
-            canvas.getContext('2d').drawImage(img, 0, 0);
-            icon.object = new Costume(canvas, item.name);
-            icon.refresh();
-        };
-        img.src = url;
-    });
-    dialog.popUp(world);
-    dialog.setExtent(new Point(400, 300));
-    dialog.setCenter(world.center());
-    dialog.drawNew();
-
-    handle = new HandleMorph(
-        dialog,
-        300,
-        280,
-        dialog.corner,
-        dialog.corner
     );
 };
 
@@ -3967,7 +3981,7 @@ IDE_Morph.prototype.saveFileAs = function (
 IDE_Morph.prototype.saveCanvasAs = function (canvas, fileName, newWindow) {
     // Export a Canvas object as a PNG image
     // Note: This commented out due to poor browser support.
-    // cavas.toBlob() is currently supported in Firefox, IE, Chrome but 
+    // cavas.toBlob() is currently supported in Firefox, IE, Chrome but
     // browsers prevent easily saving the generated files.
     // Do not re-enable without revisiting issue #1191
     // if (canvas.toBlob) {
@@ -3977,7 +3991,7 @@ IDE_Morph.prototype.saveCanvasAs = function (canvas, fileName, newWindow) {
     //     });
     //     return;
     // }
-    
+
     this.saveFileAs(canvas.toDataURL(), 'image/png', fileName, newWindow);
 };
 
@@ -4956,22 +4970,28 @@ IDE_Morph.prototype.setCloudURL = function () {
     );
 };
 
-// IDE_Morph synchronous HTTP data fetching
+// IDE_Morph asynchronous HTTP data fetching
 
-IDE_Morph.prototype.getURL = function (url) {
+IDE_Morph.prototype.getURL = function (url, callback, errorCall) {
     var request = new XMLHttpRequest(),
         myself = this;
-    try {
-        request.open('GET', url, false);
-        request.send();
-        if (request.status === 200) {
-            return request.responseText;
-        }
-        throw new Error('unable to retrieve ' + url);
-    } catch (err) {
-        myself.showMessage(err.toString());
-        return;
+
+    if (!errorCall) {
+        errorCall = function () {
+            myself.showMessage('Error: unable to retrieve ' + url);
+        };
     }
+
+    request.open('GET', url, true);
+    request.onload = function () {
+        if (request.status === 200) {
+            callback(request.responseText);
+        } else {
+            errorCall();
+        }
+    };
+    request.onerror = errorCall;
+    request.send();
 };
 
 // IDE_Morph user dialog shortcuts
@@ -5323,7 +5343,6 @@ ProjectDialogMorph.prototype.fixListFieldItemColors = function () {
 ProjectDialogMorph.prototype.setSource = function (source) {
     var myself = this,
         msg;
-
     this.source = source; //this.task === 'save' ? 'local' : source;
     this.srcBar.children.forEach(function (button) {
         button.refresh();
@@ -5345,14 +5364,25 @@ ProjectDialogMorph.prototype.setSource = function (source) {
                 myself.ide.cloudError().call(null, err, lbl);
             }
         );
+        this.updateProjectList();
         return;
     case 'examples':
-        this.projectList = this.getExamplesProjectList();
+        this.getExamplesProjectList(
+            function (list) {
+                this.projectList = list;
+                this.updateProjectList();
+            }
+        );
         break;
     case 'local':
         this.projectList = this.getLocalProjectList();
+        this.updateProjectList();
         break;
     }
+};
+
+ProjectDialogMorph.prototype.updateProjectList = function () {
+    var myself = this;
 
     this.listField.destroy();
     this.listField = new ListMorph(
@@ -5457,8 +5487,8 @@ ProjectDialogMorph.prototype.getLocalProjectList = function () {
     return projects;
 };
 
-ProjectDialogMorph.prototype.getExamplesProjectList = function () {
-    return this.ide.getMediaList('Examples');
+ProjectDialogMorph.prototype.getExamplesProjectList = function (callback) {
+    this.ide.getMediaList('Examples', callback);
 };
 
 ProjectDialogMorph.prototype.installCloudProjectList = function (pl) {
@@ -7015,24 +7045,32 @@ SoundIconMorph.prototype.createThumbnail = function () {
 };
 
 SoundIconMorph.prototype.createInfo = function () {
-    var dur = Math.round(this.object.audio.duration || 0),
-        mod = dur % 60;
-    return Math.floor(dur / 60).toString()
-            + ":"
-            + (mod < 10 ? "0" : "")
-            + mod.toString();
+    var dur, mod;
+    if (this.object.loaded) {
+        var dur = Math.round(this.object.buffer.duration),
+            mod = dur % 60;
+        return Math.floor(dur / 60).toString()
+                + ":"
+                + (mod < 10 ? "0" : "")
+                + mod.toString();
+    } else {
+        return '0:00';
+    }
 };
 
 SoundIconMorph.prototype.toggleAudioPlaying = function () {
     var myself = this;
+    if (!this.object.loaded) {
+        return null;
+    }
     if (!this.object.previewAudio) {
         //Audio is not playing
         this.button.labelString = 'Stop';
         this.button.hint = 'Stop sound';
-        this.object.previewAudio = this.object.play();
-        this.object.previewAudio.addEventListener('ended', function () {
+        this.object.previewAudio = this.object.play(SnapAudioContext.destination);
+        this.object.previewAudio.onended = function () {
             myself.audioHasEnded();
-        }, false);
+        };
     } else {
         //Audio is currently playing
         this.button.labelString = 'Play';
@@ -7054,10 +7092,8 @@ SoundIconMorph.prototype.createLabel
 
 // SoundIconMorph stepping
 
-/*
 SoundIconMorph.prototype.step
     = SpriteIconMorph.prototype.step;
-*/
 
 // SoundIconMorph layout
 
@@ -7085,8 +7121,6 @@ SoundIconMorph.prototype.renameSound = function () {
             if (answer && (answer !== sound.name)) {
                 sound.name = answer;
                 sound.version = Date.now();
-                myself.createLabel(); // can be omitted once I'm stepping
-                myself.fixLayout(); // can be omitted once I'm stepping
                 ide.hasChangedMedia = true;
             }
         }
@@ -7380,4 +7414,3 @@ StageHandleMorph.prototype.mouseLeave = function () {
     this.image = this.normalImage;
     this.changed();
 };
-

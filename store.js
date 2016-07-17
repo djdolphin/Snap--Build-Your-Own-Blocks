@@ -261,6 +261,7 @@ SnapSerializer.prototype.watcherLabels = {
     yPosition: 'y position',
     direction: 'direction',
     getScale: 'size',
+    getVolume: 'volume',
     getTempo: 'tempo',
     getLastAnswer: 'answer',
     getLastMessage: 'message',
@@ -268,6 +269,7 @@ SnapSerializer.prototype.watcherLabels = {
     getCostumeIdx: 'costume #',
     reportMouseX: 'mouse x',
     reportMouseY: 'mouse y',
+    reportLoudness: 'loudness',
     reportThreadCount: 'processes'
 };
 
@@ -397,7 +399,8 @@ SnapSerializer.prototype.rawLoadProjectModel = function (xmlNode) {
         };
         project.pentrails.src = model.pentrails.contents;
     }
-    project.stage.setTempo(model.stage.attributes.tempo);
+    project.stage.setVolume(+model.stage.attributes.volume || 100);
+    project.stage.setTempo(+model.stage.attributes.tempo || 100);
     StageMorph.prototype.dimensions = new Point(480, 360);
     if (model.stage.attributes.width) {
         StageMorph.prototype.dimensions.x =
@@ -639,6 +642,7 @@ SnapSerializer.prototype.loadSprites = function (xmlString, ide) {
         if (model.attributes.pen) {
             sprite.penPoint = model.attributes.pen;
         }
+        sprite.setVolume(+model.attributes.volume || 100);
         project.stage.add(sprite);
         ide.sprites.add(sprite);
         sprite.scale = parseFloat(model.attributes.scale || '1');
@@ -1233,6 +1237,7 @@ SnapSerializer.prototype.loadValue = function (model) {
         if (model.attributes.pen) {
             v.penPoint = model.attributes.pen;
         }
+        v.setVolume(+model.attributes.volume || 100);
         myself.project.stage.add(v);
         v.scale = parseFloat(model.attributes.scale || '1');
         v.rotationStyle = parseFloat(
@@ -1358,9 +1363,7 @@ SnapSerializer.prototype.loadValue = function (model) {
         record();
         return v;
     case 'sound':
-        audio = new Audio();
-        audio.src = model.attributes.sound;
-        v = new Sound(audio, model.attributes.name);
+        v = new Sound(model.attributes.sound, model.attributes.name);
         if (Object.prototype.hasOwnProperty.call(
                 model.attributes,
                 'mediaID'
@@ -1475,7 +1478,8 @@ StageMorph.prototype.toXML = function (serializer) {
             '<notes>$</notes>' +
             '<thumbnail>$</thumbnail>' +
             '<stage name="@" width="@" height="@" ' +
-            'costume="@" tempo="@" threadsafe="@" ' +
+            'costume="@" volume="@" tempo="@" ' +
+            'threadsafe="@" ' +
             'lines="@" ' +
             'codify="@" ' +
             'inheritance="@" ' +
@@ -1503,6 +1507,7 @@ StageMorph.prototype.toXML = function (serializer) {
         StageMorph.prototype.dimensions.x,
         StageMorph.prototype.dimensions.y,
         this.getCostumeIdx(),
+        this.getVolume(),
         this.getTempo(),
         this.isThreadSafe,
         SpriteMorph.prototype.useFlatLineEnds ? 'flat' : 'round',
@@ -1540,7 +1545,9 @@ SpriteMorph.prototype.toXML = function (serializer) {
             ' rotation="@"' +
             ' draggable="@"' +
             '%' +
-            ' costume="@" color="@,@,@" pen="@" ~>' +
+            ' costume="@"' +
+            ' volume="@"' +
+            ' color="@,@,@" pen="@" ~>' +
             '%' + // inheritance info
             '%' + // nesting info
             '<costumes>%</costumes>' +
@@ -1559,6 +1566,7 @@ SpriteMorph.prototype.toXML = function (serializer) {
         this.isDraggable,
         this.isVisible ? '' : ' hidden="true"',
         this.getCostumeIdx(),
+        this.getVolume(),
         this.color.r,
         this.color.g,
         this.color.b,

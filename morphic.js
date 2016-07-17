@@ -1015,7 +1015,7 @@
     canvasses for simple shapes in order to save system resources and
     optimize performance. Examples are costumes and backgrounds in Snap.
     In Morphic you can create new canvas elements using
-    
+
         newCanvas(extentPoint [, nonRetinaFlag])
 
     If retina support is enabled such new canvasses will automatically be
@@ -1385,7 +1385,7 @@ function copy(target) {
     canvasses for simple shapes in order to save system resources and
     optimize performance. Examples are costumes and backgrounds in Snap.
     In Morphic you can create new canvas elements using
-    
+
         newCanvas(extentPoint [, nonRetinaFlag])
 
     If retina support is enabled such new canvasses will automatically be
@@ -1419,7 +1419,7 @@ function enableRetinaSupport() {
 
     NOTE: This implementation is not exhaustive; it only implements what is
     needed by the Snap! UI.
-    
+
     [Jens]: like all other retina screen support implementations I've seen
     Bartosz's patch also does not address putImageData() compatibility when
     mixing retina-enabled and non-retina canvasses. If you need to manipulate
@@ -1539,7 +1539,7 @@ function enableRetinaSupport() {
     contextProto.drawImage = function(image) {
         var pixelRatio = getPixelRatio(image),
             sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight;
-        
+
         // Different signatures of drawImage() method have different
         // parameter assignments.
         switch (arguments.length) {
@@ -4976,7 +4976,7 @@ CursorMorph.prototype.initializeClipboardHandler = function () {
             myself.processKeyDown(event);
             this.value = myself.target.selection();
             this.select();
-            
+
             // Make sure tab prevents default
             if (event.keyIdentifier === 'U+0009' ||
                     event.keyIdentifier === 'Tab') {
@@ -4986,7 +4986,7 @@ CursorMorph.prototype.initializeClipboardHandler = function () {
         },
         false
     );
-    
+
     this.clipboardHandler.addEventListener(
         'input',
         function (event) {
@@ -10389,14 +10389,12 @@ HandMorph.prototype.processDrop = function (event) {
     }
 
     function readAudio(aFile) {
-        var snd = new Audio(),
-            frd = new FileReader();
+        var frd = new FileReader();
         while (!target.droppedAudio) {
             target = target.parent;
         }
         frd.onloadend = function (e) {
-            snd.src = e.target.result;
-            target.droppedAudio(snd, aFile.name);
+            target.droppedAudio(e.target.result, aFile.name);
         };
         frd.readAsDataURL(aFile);
     }
